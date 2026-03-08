@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import argparse
+import string
 
 from PIL import Image
 
@@ -22,6 +23,21 @@ import torch
 
 from strhub.data.module import SceneTextDataModule
 from strhub.models.utils import load_from_checkpoint, parse_model_args
+
+
+def restrict_logits_to_digits(logits, tokenizer):
+    allowed_ids = {tokenizer._stoi[d] for d in string.digits if d in tokenizer._stoi}
+    if hasattr(tokenizer, 'eos_id'):
+        allowed_ids.add(tokenizer.eos_id)
+    if hasattr(tokenizer, 'blank_id'):
+        allowed_ids.add(tokenizer.blank_id)
+    if not allowed_ids:
+        raise ValueError('Tokenizer does not contain digit tokens.')
+
+    masked_logits = torch.full_like(logits, -torch.inf)
+    keep = sorted(allowed_ids)
+    masked_logits[..., keep] = logits[..., keep]
+    return masked_logits
 
 
 @torch.inference_mode()
@@ -42,7 +58,8 @@ def main():
         image = Image.open(fname).convert('RGB')
         image = img_transform(image).unsqueeze(0).to(args.device)
 
-        p = model(image).softmax(-1)
+        logits = restrict_logits_to_digits(model(image), model.tokenizer)
+        p = logits.softmax(-1)
         pred, p = model.tokenizer.decode(p)
         print(f'{fname}: {pred[0]}')
 
